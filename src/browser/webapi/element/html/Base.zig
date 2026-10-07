@@ -78,7 +78,7 @@ pub fn setHref(self: *Base, value: []const u8, frame: *Frame) !void {
         owner.base_url = null;
         return;
     }
-    owner.base_url = try URL.resolve(owner.arena, owner.url, href, .{});
+    owner.base_url = try URL.resolve(owner.page_arena, owner.url, href, .{});
 }
 
 pub const JsApi = struct {

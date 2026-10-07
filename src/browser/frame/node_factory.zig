@@ -416,7 +416,7 @@ pub fn createElementNS(document: *const Node.Document, namespace: Element.Namesp
                         if (document._frame) |realm| {
                             if (realm.base_url == null) {
                                 if (n.as(Element).getAttributeInterned("href")) |href| {
-                                    realm.base_url = try URL.resolve(realm.arena, realm.url, href, .{});
+                                    realm.base_url = try URL.resolve(realm.page_arena, realm.url, href, .{});
                                 }
                             }
                         }
@@ -823,7 +823,7 @@ pub fn createElementNS(document: *const Node.Document, namespace: Element.Namesp
                 },
                 else => {},
             }
-            const tag_name = try String.init(frame.arena, name, .{});
+            const tag_name = try String.init(frame.page_arena, name, .{});
 
             // Check if this is a custom element (must have hyphen for HTML namespace)
             const has_hyphen = std.mem.findScalar(u8, name, '-') != null;
@@ -852,7 +852,7 @@ pub fn createElementNS(document: *const Node.Document, namespace: Element.Namesp
                         ._upgrade_candidate = creation == .construct,
                     });
                     if (creation == .construct) {
-                        try realm._undefined_custom_elements.append(realm.arena, node.as(Element).is(Element.Html.Custom).?);
+                        try realm._undefined_custom_elements.append(realm.page_arena, node.as(Element).is(Element.Html.Custom).?);
                     }
                     return node;
                 }
@@ -964,7 +964,7 @@ pub fn createElementNS(document: *const Node.Document, namespace: Element.Namesp
             return createSvgElementT(document, Element.Svg.Generic, name, attribute_iterator, .{ ._tag = tag });
         },
         else => {
-            const tag_name = try String.init(frame.arena, name, .{});
+            const tag_name = try String.init(frame.page_arena, name, .{});
             return createHtmlElementT(document, Element.Html.Unknown, namespace, attribute_iterator, .{ ._tag_name = tag_name });
         },
     }
@@ -1179,7 +1179,7 @@ pub fn constructCustomElement(frame: *Frame, new_target: JS.Function) !*Element 
         return error.IllegalConstructor;
     }
 
-    const tag_name = try String.init(frame.arena, definition.name, .{});
+    const tag_name = try String.init(frame.page_arena, definition.name, .{});
     const node = try createHtmlElementT(frame.document, Element.Html.Custom, .html, null, .{
         ._tag_name = tag_name,
         ._definition = definition,
