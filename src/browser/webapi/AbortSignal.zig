@@ -26,6 +26,7 @@ const Scheduler = @import("Scheduler.zig");
 const EventTarget = @import("EventTarget.zig");
 const DOMException = @import("DOMException.zig");
 const ModelContextTool = @import("ModelContext.zig").Tool;
+const LockRequest = @import("LockManager.zig").LockRequest;
 
 const log = lp.log;
 const Execution = js.Execution;
@@ -40,6 +41,7 @@ const Dependend = union(enum) {
     // Handled by the owning signal's markAborted (which runs for dependent
     // signals too, unlike this union's markAborted).
     scheduler_task: *Scheduler.Task,
+    lock_request: *LockRequest,
 
     // Returns false if the dependent was already aborted, in which case no
     // abort event must be dispatched for it.
@@ -54,14 +56,14 @@ const Dependend = union(enum) {
                 try dep.markAborted(exec);
                 return true;
             },
-            .scheduler_task => return false,
+            .scheduler_task, .lock_request => return false,
         }
     }
 
     fn dispatchAbortEvent(self: Dependend, exec: *const Execution) !void {
         switch (self) {
             .signal => |dep| try dep.dispatchAbortEvent(exec),
-            .model_context_tool, .scheduler_task => {},
+            .model_context_tool, .scheduler_task, .lock_request => {},
         }
     }
 };
@@ -153,6 +155,7 @@ fn markAborted(self: *AbortSignal, reason_: ?Reason, exec: *const Execution) !vo
     for (self._dependents.items) |dep| {
         switch (dep) {
             .scheduler_task => |task| task.onAbort(self._reason, exec),
+            .lock_request => |lr| lr.onAbort(self._reason, exec),
             else => {},
         }
     }
