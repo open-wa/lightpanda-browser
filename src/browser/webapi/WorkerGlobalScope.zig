@@ -362,8 +362,10 @@ fn atob(_: *const WorkerGlobalScope, input: base64.BinInput, exec: *JS.Execution
     return .{ .bytes = bytes };
 }
 
-pub fn structuredClone(_: *const WorkerGlobalScope, value: JS.Value) !JS.Value {
-    return value.structuredClone();
+pub fn structuredClone(_: *const WorkerGlobalScope, value: JS.Value, options: ?JS.Value) !JS.Value {
+    const cloned = try value.cloneMessageTo(value.local, options, null);
+    defer cloned.release();
+    return cloned.data.local(value.local);
 }
 
 pub fn unhandledPromiseRejection(self: *WorkerGlobalScope, no_handler: bool, rejection: JS.PromiseRejection) !void {

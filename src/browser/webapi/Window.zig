@@ -885,9 +885,10 @@ fn atob(_: *const Window, input: base64.BinInput, frame: *Frame) !js.String.OneB
     return .{ .bytes = decoded };
 }
 
-pub fn structuredClone(_: *const Window, value: js.Value) !js.Value {
-    // the serializer already threw (e.g. a DataCloneError); keep it
-    return value.structuredClone() catch error.TryCatchRethrow;
+pub fn structuredClone(_: *const Window, value: js.Value, options: ?js.Value) !js.Value {
+    const cloned = try value.cloneMessageTo(value.local, options, null);
+    defer cloned.release();
+    return cloned.data.local(value.local);
 }
 
 fn getFrame(self: *Window, idx: usize) !?*Window {

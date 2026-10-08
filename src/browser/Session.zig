@@ -78,6 +78,9 @@ shared_workers: std.StringHashMapUnmanaged(*SharedWorkerGlobalScope) = .empty,
 // pages by url.
 service_workers: std.StringHashMapUnmanaged(*ServiceWorkerGlobalScope) = .empty,
 
+// Origin-scoped lock requests shared by windows and native workers.
+web_locks: std.ArrayList(*@import("webapi/LockManager.zig").Request) = .empty,
+
 _page_destruction_queue: std.ArrayList(*Page) = .empty,
 
 // Round-robin cursor for fair page iteration (processQueuedNavigation)

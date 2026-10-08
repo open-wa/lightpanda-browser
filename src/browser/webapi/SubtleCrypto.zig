@@ -400,10 +400,10 @@ pub fn encrypt(
     _: *const SubtleCrypto,
     algo: algorithm.Encrypt,
     key: *CryptoKey,
-    data: js.TypedArray(u8),
+    data: js.BufferSource,
     exec: *const Execution,
 ) !js.Promise {
-    return cryptOp(algo, key, data.values, true, exec);
+    return cryptOp(algo, key, data.bytes, true, exec);
 }
 
 /// Decrypts data with the given key and algorithm.
@@ -411,10 +411,10 @@ pub fn decrypt(
     _: *const SubtleCrypto,
     algo: algorithm.Encrypt,
     key: *CryptoKey,
-    data: js.TypedArray(u8),
+    data: js.BufferSource,
     exec: *const Execution,
 ) !js.Promise {
-    return cryptOp(algo, key, data.values, false, exec);
+    return cryptOp(algo, key, data.bytes, false, exec);
 }
 
 fn cryptOp(
@@ -441,12 +441,12 @@ pub fn sign(
     /// https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/sign#algorithm
     algo: algorithm.Sign,
     key: *CryptoKey,
-    data: []const u8, // ArrayBuffer.
+    data: js.BufferSource,
     exec: *const Execution,
 ) !js.Promise {
     return switch (key._type) {
         // Call sign for HMAC.
-        .hmac => return HMAC.sign(algo, key, data, exec),
+        .hmac => return HMAC.sign(algo, key, data.bytes, exec),
         else => {
             log.debug(.not_implemented, "SubtleCrypto.sign", .{ .key_type = key._type });
             return error.InvalidAccessError;
@@ -459,8 +459,8 @@ pub fn verify(
     _: *const SubtleCrypto,
     algo: algorithm.Sign,
     key: *const CryptoKey,
-    signature: []const u8, // ArrayBuffer.
-    data: []const u8, // ArrayBuffer.
+    signature: js.BufferSource,
+    data: js.BufferSource,
     exec: *const Execution,
 ) !js.Promise {
     if (!algo.isHMAC()) {
@@ -468,7 +468,7 @@ pub fn verify(
     }
 
     return switch (key._type) {
-        .hmac => HMAC.verify(key, signature, data, exec),
+        .hmac => HMAC.verify(key, signature.bytes, data.bytes, exec),
         else => error.InvalidAccessError,
     };
 }
@@ -489,7 +489,7 @@ const DigestInput = union(enum) {
 };
 
 /// Generates a digest of the given data, using the specified hash function.
-pub fn digest(_: *const SubtleCrypto, algo: DigestInput, data: js.TypedArray(u8), exec: *const Execution) !js.Promise {
+pub fn digest(_: *const SubtleCrypto, algo: DigestInput, data: js.BufferSource, exec: *const Execution) !js.Promise {
     const local = exec.js.local.?;
 
     const algo_name = algo.name() orelse {
@@ -502,7 +502,7 @@ pub fn digest(_: *const SubtleCrypto, algo: DigestInput, data: js.TypedArray(u8)
     const normalized = std.ascii.upperString(exec.buf, algo_name);
     const digest_type = crypto.findDigest(normalized) catch return error.NotSupported;
 
-    const bytes = data.values;
+    const bytes = data.bytes;
     const out = exec.buf[0..crypto.EVP_MAX_MD_SIZE];
     var out_size: c_uint = 0;
     const result = crypto.EVP_Digest(bytes.ptr, bytes.len, out, &out_size, digest_type, null);

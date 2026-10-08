@@ -60,6 +60,10 @@ _result: Result = .{ .none = js.Undefined{} },
 // whether or not we own th result value, if we do, we can free it once we know
 // it cannot be used
 _result_owned: bool = false,
+// Keep the original JS request (including application expandos) alive until its
+// completion event is delivered. A native pointer alone does not pin a weak
+// identity wrapper while a batch of requests waits for the transaction drain.
+_pending_wrapper: ?*js.GlobalSlot = null,
 
 _on_success: ?js.Function.Global = null,
 _on_error: ?js.Function.Global = null,
@@ -213,6 +217,7 @@ pub fn failWithAbort(self: *IDBRequest) void {
 }
 
 pub fn deliver(self: *IDBRequest, exec: *Execution) !void {
+    defer if (self.delivered()) self.releasePendingWrapper();
     self._ready_state = .done;
     if (self._error != null) {
         return self.fireError(exec);
@@ -453,6 +458,11 @@ pub fn submit(self: *IDBRequest, op: Operation, exec: *Execution) !*IDBRequest {
     self._op = op;
     self._source = op.source();
     const txn = self._txn.owned;
+    if (self._pending_wrapper == null) {
+        const wrapper = try exec.js.local.?.mapZigInstanceToJs(null, self);
+        self._pending_wrapper = try txn.persist(wrapper.toValue());
+    }
+    errdefer self.releasePendingWrapper();
     try txn.enqueue(self);
 
     if (txn.getMode() == .versionchange) {
@@ -464,6 +474,13 @@ pub fn submit(self: *IDBRequest, op: Operation, exec: *Execution) !*IDBRequest {
         try self.execute(exec);
     }
     return self;
+}
+
+fn releasePendingWrapper(self: *IDBRequest) void {
+    if (self._pending_wrapper) |wrapper| {
+        wrapper.reset();
+        self._pending_wrapper = null;
+    }
 }
 
 pub fn execute(self: *IDBRequest, exec: *Execution) !void {

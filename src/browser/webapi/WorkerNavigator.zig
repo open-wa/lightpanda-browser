@@ -22,13 +22,14 @@ const Execution = js.Execution;
 const Navigator = @import("Navigator.zig");
 const Permissions = @import("Permissions.zig");
 const StorageManager = @import("StorageManager.zig");
+const LockManager = @import("LockManager.zig");
 const NavigatorUAData = @import("NavigatorUAData.zig");
 
 const WorkerNavigator = @This();
 
 comptime {
     // protect against identity_map conflict (make sure _pad: bool does its job)
-    for ([_][]const u8{ "_permissions", "_storage", "_ua_data" }) |name| {
+    for ([_][]const u8{ "_permissions", "_storage", "_locks", "_ua_data" }) |name| {
         if (@offsetOf(WorkerNavigator, name) == 0) {
             @compileError(name ++ " aliases the WorkerNavigator");
         }
@@ -38,6 +39,7 @@ comptime {
 _pad: bool = false,
 _permissions: Permissions = .{},
 _storage: StorageManager = .{},
+_locks: LockManager = .{},
 _ua_data: NavigatorUAData = .{},
 
 pub const init: WorkerNavigator = .{};
@@ -98,6 +100,10 @@ fn getPermissions(self: *WorkerNavigator) *Permissions {
     return &self._permissions;
 }
 
+fn getLocks(self: *WorkerNavigator) *LockManager {
+    return &self._locks;
+}
+
 fn getStorage(self: *WorkerNavigator) *StorageManager {
     return &self._storage;
 }
@@ -131,5 +137,6 @@ pub const JsApi = struct {
 
     pub const permissions = bridge.accessor(WorkerNavigator.getPermissions, null, .{});
     pub const storage = bridge.accessor(WorkerNavigator.getStorage, null, .{});
+    pub const locks = bridge.accessor(WorkerNavigator.getLocks, null, .{});
     pub const userAgentData = bridge.accessor(WorkerNavigator.getUserAgentData, null, .{});
 };

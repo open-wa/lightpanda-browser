@@ -166,6 +166,8 @@ pub fn build(b: *Build) !void {
         // browser
         const exe = addExe(b, exe_config, "lightpanda", "lightpanda_exe_check", "src/main.zig");
         b.installArtifact(exe);
+        const session_executable = b.step("session-executable", "Produce the session browser executable");
+        session_executable.dependOn(&b.addInstallArtifact(exe, .{}).step);
 
         const run_cmd = b.addRunArtifact(exe);
         run_cmd.addPassthruArgs();

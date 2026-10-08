@@ -27,6 +27,7 @@ const PluginArray = @import("PluginArray.zig");
 const Permissions = @import("Permissions.zig");
 const ModelContext = @import("ModelContext.zig");
 const StorageManager = @import("StorageManager.zig");
+const LockManager = @import("LockManager.zig");
 const NavigatorUAData = @import("NavigatorUAData.zig");
 const Geolocation = @import("geolocation/Geolocation.zig");
 const ServiceWorkerContainer = @import("ServiceWorkerContainer.zig");
@@ -37,7 +38,7 @@ comptime {
     // Ensure we don't cause an identity map conflict. Because _geolocation is
     // lazy and, for now, Zig orders the highest-aligned field first, none of
     // the other fields land at offset 0.
-    for ([_][]const u8{ "_plugins", "_permissions", "_storage", "_ua_data" }) |name| {
+    for ([_][]const u8{ "_plugins", "_permissions", "_storage", "_locks", "_ua_data" }) |name| {
         if (@offsetOf(Navigator, name) == 0) @compileError(name ++ " aliases the Navigator");
     }
 }
@@ -46,6 +47,7 @@ _plugins: PluginArray = .{},
 _permissions: Permissions = .{},
 _geolocation: ?*Geolocation = null,
 _storage: StorageManager = .{},
+_locks: LockManager = .{},
 _ua_data: NavigatorUAData = .{},
 _service_worker: ?*ServiceWorkerContainer = null,
 
@@ -158,6 +160,10 @@ fn getGeolocation(self: *Navigator, exec: *Execution) !*Geolocation {
     const g = try exec._factory.create(Geolocation{});
     self._geolocation = g;
     return g;
+}
+
+fn getLocks(self: *Navigator) *LockManager {
+    return &self._locks;
 }
 
 fn getStorage(self: *Navigator) *StorageManager {
@@ -283,6 +289,7 @@ pub const JsApi = struct {
     pub const sendBeacon = bridge.function(Navigator.sendBeacon, .{});
     pub const permissions = bridge.accessor(Navigator.getPermissions, null, .{});
     pub const storage = bridge.accessor(Navigator.getStorage, null, .{});
+    pub const locks = bridge.accessor(Navigator.getLocks, null, .{});
     pub const serviceWorker = bridge.accessor(Navigator.getServiceWorker, null, .{});
     pub const userAgentData = bridge.accessor(Navigator.getUserAgentData, null, .{});
     pub const plugins = bridge.accessor(Navigator.getPlugins, null, .{});

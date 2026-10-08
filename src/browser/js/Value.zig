@@ -28,6 +28,7 @@ const bridge = js.bridge;
 const Allocator = std.mem.Allocator;
 
 const Value = @This();
+const MessagePort = @import("../webapi/MessagePort.zig");
 
 local: *const js.Local,
 handle: *const v8.Value,
@@ -395,6 +396,66 @@ pub fn structuredCloneTo(self: Value, target: *const js.Local) !Value {
     return deserialize(target, serialized.bytes());
 }
 
+// Native cross-realm messages own their cloned value and transferred ports.
+pub const ClonedMessage = struct {
+    data: js.Value.Global,
+    ports: []const *MessagePort = &.{},
+
+    pub fn release(self: ClonedMessage) void {
+        self.data.release();
+    }
+};
+
+pub fn cloneMessageTo(self: Value, target: *const js.Local, options: ?Value, forbidden: ?*MessagePort) !ClonedMessage {
+    const allocator = self.local.call_arena;
+    var sources: std.ArrayList(*MessagePort) = .empty;
+    var buffers: std.ArrayList(Value) = .empty;
+    var entries: std.ArrayList(Value) = .empty;
+    if (options) |opts| {
+        const list = if (opts.isArray()) opts else if (opts.isNullOrUndefined()) opts else try opts.toObject().get("transfer");
+        if (!list.isNullOrUndefined()) {
+    const transfer_iterator = (try list.iterator()) orelse return error.TypeError;
+            while (try transfer_iterator.next()) |entry| {
+                for (entries.items) |previous| {
+                    if (entry.strictEquals(previous)) return error.DataClone;
+                }
+                try entries.append(allocator, entry);
+                if (entry.toZig(*MessagePort)) |port| {
+                    if (port._closed or port == forbidden) return error.DataClone;
+                    try sources.append(allocator, port);
+                } else |_| {
+                    if (!v8.v8__Value__IsArrayBuffer(entry.handle)) return error.DataClone;
+                    const detached = try entry.toObject().get("detached");
+                    if (detached.isTrue()) return error.DataClone;
+                    try buffers.append(allocator, entry);
+                }
+            }
+        }
+    }
+    const serialized = try self.serializeWithPorts(sources.items);
+    defer serialized.deinit();
+    const exec = &target.ctx.execution;
+    const ports = try exec.arena.alloc(*MessagePort, sources.items.len);
+    var prepared: usize = 0;
+    errdefer for (ports[0..prepared]) |port| port.close();
+    for (sources.items, 0..) |source, index| {
+        ports[index] = try source.prepareTransfer(target);
+        prepared += 1;
+    }
+    const cloned = try deserializeWithPorts(target, serialized.bytes(), ports);
+    const data = try cloned.persist();
+    errdefer data.release();
+    // V8's ArrayBuffer transfer intrinsic detaches only after serialization has
+    // succeeded. The receiver already owns its independent native backing store.
+    for (buffers.items) |buffer| {
+        const method = try (try buffer.toObject().get("transfer")).toZig(js.Function);
+        const bound = try method.withThis(buffer.toObject());
+        try bound.call(void, .{});
+    }
+    for (sources.items, ports) |source, destination| source.commitTransfer(destination);
+    return .{ .data = data, .ports = ports };
+}
+
 // A structured-serialized value: a V8-owned byte buffer. Caller must free it
 // and must dupe the bytes if they want it to outlive the current local scope.
 pub const Serialized = struct {
@@ -413,9 +474,14 @@ pub const Serialized = struct {
 // Serialize `self` into a V8-owned buffer. The caller must call deinit on the
 // result. Raises a JS exception (DataCloneError) for unserializable values.
 pub fn serialize(self: Value) !Serialized {
+    return self.serializeWithPorts(&.{});
+}
+
+fn serializeWithPorts(self: Value, ports: []const *MessagePort) !Serialized {
     var delegate_ctx = CloneDelegate.SerializeContext{
         .local = self.local,
         .serializer = undefined,
+        .ports = ports,
     };
     const serializer = v8.v8__ValueSerializer__New(self.local.isolate.handle, &.{
         .data = &delegate_ctx,
@@ -443,9 +509,14 @@ pub fn serialize(self: Value) !Serialized {
 // Deserialize a structured-serialized buffer (from `serialize`) into a value in
 // `local`'s context. A malformed buffer surfaces as error.JsException.
 pub fn deserialize(local: *const js.Local, bytes: []const u8) !Value {
+    return deserializeWithPorts(local, bytes, &.{});
+}
+
+fn deserializeWithPorts(local: *const js.Local, bytes: []const u8, ports: []const *MessagePort) !Value {
     var delegate_ctx = CloneDelegate.DeserializeContext{
         .local = local,
         .deserializer = undefined,
+        .ports = ports,
     };
     const deserializer = v8.v8__ValueDeserializer__New(local.isolate.handle, bytes.ptr, bytes.len, &.{
         .data = &delegate_ctx,
@@ -473,6 +544,7 @@ const cloneable_types = .{
     @import("../webapi/File.zig"),
     @import("../webapi/FileList.zig"),
     @import("../webapi/ImageData.zig"),
+    @import("../webapi/CryptoKey.zig"),
     @import("../webapi/DOMPointReadOnly.zig"),
     @import("../webapi/DOMPoint.zig"),
     @import("../webapi/DOMRectReadOnly.zig"),
@@ -542,11 +614,13 @@ const CloneDelegate = struct {
     const SerializeContext = struct {
         local: *const js.Local,
         serializer: *v8.ValueSerializer,
+        ports: []const *MessagePort = &.{},
     };
 
     const DeserializeContext = struct {
         local: *const js.Local,
         deserializer: *v8.ValueDeserializer,
+        ports: []const *MessagePort = &.{},
     };
 
     // Called when V8 encounters an object with embedder fields, i.e. one of
@@ -561,6 +635,17 @@ const CloneDelegate = struct {
             const tao = TaggedOpaque.fromObject(obj) orelse break :blk;
 
             const prototype_chain = tao.prototype_chain[0..tao.prototype_len];
+            if (prototype_chain[0].index == bridge.JsApiLookup.getId(MessagePort.JsApi)) {
+                const port: *MessagePort = @ptrCast(@alignCast(tao.value));
+                for (ctx.ports, 0..) |transferred, index| {
+                    if (transferred == port) {
+                        v8.v8__ValueSerializer__WriteUint32(ctx.serializer, std.math.maxInt(u32));
+                        v8.v8__ValueSerializer__WriteUint32(ctx.serializer, @intCast(index));
+                        return .{ .has_value = true, .value = true };
+                    }
+                }
+                break :blk;
+            }
             if (writeCloneable(ctx, prototype_chain[0].index, tao.value)) |result| {
                 return result;
             }
@@ -608,6 +693,15 @@ const CloneDelegate = struct {
 
         var tag: u32 = undefined;
         if (v8.v8__ValueDeserializer__ReadUint32(ctx.deserializer, &tag)) {
+            if (tag == std.math.maxInt(u32)) {
+                var index: u32 = undefined;
+                if (!v8.v8__ValueDeserializer__ReadUint32(ctx.deserializer, &index) or index >= ctx.ports.len) {
+                    throwDataCloneException(local, null);
+                    return null;
+                }
+                const object = local.mapZigInstanceToJs(null, ctx.ports[index]) catch return null;
+                return object.handle;
+            }
             var reader = StructuredReader{ .local = local, .deserializer = ctx.deserializer };
             inline for (cloneable_types, 0..) |T, i| {
                 if (tag == i) {

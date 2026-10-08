@@ -153,7 +153,7 @@ pub fn setUserAgentOverride(cmd: *CDP.Command) !void {
     const ua = params.userAgent;
     const reserved = if (Config.validateUserAgent(ua)) false else |err| switch (err) {
         error.NonPrintable => return cmd.sendError(-32602, "User agent contains non-printable characters", .{}),
-        error.Reserved => true,
+
     };
 
     const bc = cmd.browser_context orelse return error.BrowserContextNotLoaded;

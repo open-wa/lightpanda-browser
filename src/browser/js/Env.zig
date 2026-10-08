@@ -452,6 +452,11 @@ pub fn hideServiceWorker(self: *const Env, comptime is_frame: bool, v8_context: 
         self.deletePrototypeMember(v8_context, global_obj, "navigator", "service_worker");
     }
 
+}
+
+// CacheStorage is usable by windows and dedicated workers independently of
+// ServiceWorker registration. Hide it only for an insecure execution context.
+pub fn hideCacheStorage(self: *const Env, comptime is_frame: bool, v8_context: *const v8.Context, global_obj: *const v8.Object) void {
     // A [Global] interface's members are on its prototype and mirrored onto the
     // global itself.
     self.deletePrototypeMember(v8_context, global_obj, if (comptime is_frame) "window" else "worker_global_scope", "caches");

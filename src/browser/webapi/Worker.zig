@@ -54,6 +54,7 @@ _worker_scope: *DedicatedWorkerGlobalScope,
 
 _url: [:0]const u8,
 _type: WorkerType = .classic,
+_name: []const u8 = "",
 _script_loaded: bool = false,
 _script_arena: ?*lp.Arena = null,
 _script_buffer: std.ArrayList(u8) = .empty,
@@ -65,6 +66,7 @@ _on_message: ?js.Function.Global = null,
 _on_messageerror: ?js.Function.Global = null,
 
 const WorkerOptions = struct {
+    name: []const u8 = "",
     type: WorkerType = .classic,
 };
 
@@ -81,6 +83,7 @@ pub fn init(url: []const u8, options: ?WorkerOptions, frame: *Frame) !*Worker {
         ._frame = frame,
         ._url = resolved_url,
         ._type = if (options) |o| o.type else .classic,
+        ._name = try arena.allocator().dupe(u8, if (options) |o| o.name else ""),
         ._worker_scope = undefined,
         ._frame_id = session.nextFrameId(),
         ._loader_id = session.nextLoaderId(),
@@ -336,12 +339,12 @@ pub fn terminate(self: *Worker) void {
 }
 
 // Posts a message from the frame to the worker.
-pub fn postMessage(self: *Worker, data: js.Value) !void {
-    try self._worker_scope.receiveMessage(data);
+pub fn postMessage(self: *Worker, data: js.Value, options: ?js.Value) !void {
+    try self._worker_scope.receiveMessage(data, options);
 }
 
 // Called internally by DedicatedWorkerGlobalScope when it wants to post a message to us
-pub fn receiveMessage(self: *Worker, data: js.Value) !void {
+pub fn receiveMessage(self: *Worker, data: js.Value, options: ?js.Value) !void {
     const frame = self._frame;
     const cloned_data = blk: {
         var ls: js.Local.Scope = undefined;
@@ -349,8 +352,7 @@ pub fn receiveMessage(self: *Worker, data: js.Value) !void {
         defer ls.deinit();
 
         // clones from where it currently is (the Worker context) to our Page's context
-        const cloned = data.structuredCloneTo(&ls.local) catch |err| break :blk err;
-        break :blk cloned.persist();
+        break :blk try data.cloneMessageTo(&ls.local, options, null);
     };
 
     const message_arena = try frame.getArena(.tiny, "Worker.receiveMessage");
@@ -407,7 +409,7 @@ fn getFunctionFromSetter(setter_: ?FunctionSetter) ?js.Function.Global {
 }
 
 const ReceiveMessageCallback = struct {
-    data: anyerror!js.Value.Global,
+    data: anyerror!js.Value.ClonedMessage,
     arena: *lp.Arena,
     worker: *Worker,
 
@@ -455,7 +457,8 @@ const ReceiveMessageCallback = struct {
         }
 
         const event = (try MessageEvent.initTrusted(comptime .wrap("message"), .{
-            .data = .{ .value = data },
+            .data = .{ .value = data.data },
+            .ports = data.ports,
             .bubbles = false,
             .cancelable = false,
         }, frame.page)).asEvent();

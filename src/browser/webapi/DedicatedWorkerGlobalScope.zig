@@ -48,7 +48,7 @@ _on_messageerror: ?js.Function.Global = null,
 // and delivered once the worker is ready (i.e. once onmessage can be set).
 // Drained by drainPendingMessages, called from Worker.loadInitialScript
 // after the initial script has been evaluated.
-_pending_messages: std.ArrayList(?js.Value.Global) = .empty,
+_pending_messages: std.ArrayList(?js.Value.ClonedMessage) = .empty,
 
 pub fn init(worker: *Worker, url: [:0]const u8) !*DedicatedWorkerGlobalScope {
     return WorkerGlobalScope.init(
@@ -75,8 +75,8 @@ pub fn deinit(self: *DedicatedWorkerGlobalScope) void {
     self._proto.deinit();
 }
 
-pub fn postMessage(self: *DedicatedWorkerGlobalScope, data: js.Value) !void {
-    try self._worker.receiveMessage(data);
+pub fn postMessage(self: *DedicatedWorkerGlobalScope, data: js.Value, options: ?js.Value) !void {
+    try self._worker.receiveMessage(data, options);
 }
 
 pub fn close(self: *DedicatedWorkerGlobalScope) void {
@@ -84,6 +84,10 @@ pub fn close(self: *DedicatedWorkerGlobalScope) void {
     self._proto._session.idb.detachContext(self._proto.js);
     self._proto.js.scheduler.reset();
     self._closed = true;
+}
+
+fn getName(self: *const DedicatedWorkerGlobalScope) []const u8 {
+    return self._worker._name;
 }
 
 fn getOnMessage(self: *const DedicatedWorkerGlobalScope) ?js.Function.Global {
@@ -116,20 +120,19 @@ pub fn cancelAnimationFrame(self: *DedicatedWorkerGlobalScope, id: u32) void {
 }
 
 // Called internally by Worker when it wants to post a message to us
-pub fn receiveMessage(self: *DedicatedWorkerGlobalScope, data: js.Value) !void {
+pub fn receiveMessage(self: *DedicatedWorkerGlobalScope, data: js.Value, options: ?js.Value) !void {
     if (self._closed) {
         return;
     }
 
-    const cloned_data: ?js.Value.Global = blk: {
+    const cloned_data: ?js.Value.ClonedMessage = blk: {
         // Enter our context to clone the message
         var ls: js.Local.Scope = undefined;
         self._proto.js.localScope(&ls);
         defer ls.deinit();
 
         // clones from where it currently is (the Worker's Page context) to our Context
-        const cloned = data.structuredCloneTo(&ls.local) catch break :blk null;
-        break :blk cloned.persist() catch break :blk null;
+        break :blk try data.cloneMessageTo(&ls.local, options, null);
     };
 
     if (!self._worker._script_loaded) {
@@ -145,7 +148,7 @@ pub fn receiveMessage(self: *DedicatedWorkerGlobalScope, data: js.Value) !void {
     try self.scheduleMessage(cloned_data);
 }
 
-fn scheduleMessage(self: *DedicatedWorkerGlobalScope, cloned_data: ?js.Value.Global) !void {
+fn scheduleMessage(self: *DedicatedWorkerGlobalScope, cloned_data: ?js.Value.ClonedMessage) !void {
     const wgs = self._proto;
     const session = wgs._session;
 
@@ -180,7 +183,7 @@ pub fn drainPendingMessages(self: *DedicatedWorkerGlobalScope) void {
 }
 
 const ReceiveMessageCallback = struct {
-    data: ?js.Value.Global,
+    data: ?js.Value.ClonedMessage,
     arena: *lp.Arena,
     worker_scope: *DedicatedWorkerGlobalScope,
 
@@ -227,7 +230,8 @@ const ReceiveMessageCallback = struct {
         }
 
         const event = (try MessageEvent.initTrusted(comptime .wrap("message"), .{
-            .data = .{ .value = self.data.? },
+            .data = .{ .value = self.data.?.data },
+            .ports = self.data.?.ports,
             .bubbles = false,
             .cancelable = false,
         }, wsg.page)).asEvent();
@@ -245,6 +249,7 @@ pub const JsApi = struct {
         pub var class_id: bridge.ClassId = undefined;
     };
 
+    pub const name = bridge.accessor(DedicatedWorkerGlobalScope.getName, null, .{});
     pub const postMessage = bridge.function(DedicatedWorkerGlobalScope.postMessage, .{});
     pub const close = bridge.function(DedicatedWorkerGlobalScope.close, .{});
     pub const onmessage = bridge.accessor(DedicatedWorkerGlobalScope.getOnMessage, DedicatedWorkerGlobalScope.setOnMessage, .{});

@@ -79,22 +79,31 @@ pub fn contains(self: *const DOMStringList, string: []const u8) bool {
 }
 
 pub fn keys(self: *const DOMStringList, exec: *Execution) !*KeyIterator {
-    return .init(.{ .items = self._items }, exec);
+    return .init(.{ .items = self._items, .list = @constCast(self) }, exec);
 }
 
 pub fn values(self: *const DOMStringList, exec: *Execution) !*ValueIterator {
-    return .init(.{ .items = self._items }, exec);
+    return .init(.{ .items = self._items, .list = @constCast(self) }, exec);
 }
 
 pub fn entries(self: *const DOMStringList, exec: *Execution) !*EntryIterator {
-    return .init(.{ .items = self._items }, exec);
+    return .init(.{ .items = self._items, .list = @constCast(self) }, exec);
 }
 
-// The iterator borrows the (page-arena) slice rather than the DOMStringList, so
-// it's safe regardless of the wrapper's lifetime.
+// IndexedDB lists own an arena independent of their JS wrapper. An iterator
+// retains that arena so collecting the list cannot free its borrowed strings.
 const Iterator = struct {
     index: u32 = 0,
     items: []const []const u8,
+    list: *DOMStringList,
+
+    pub fn acquireRef(self: *Iterator) void {
+        self.list.acquireRef();
+    }
+
+    pub fn releaseRef(self: *Iterator, page: *Page) void {
+        self.list.releaseRef(page);
+    }
 
     const Entry = struct { u32, []const u8 };
 

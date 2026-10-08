@@ -126,10 +126,7 @@ fn httpHeaderValidator(allocator: Allocator, args: *std.process.Args.Iterator, l
         return error.InvalidArgument;
     }
 
-    if (std.ascii.eqlIgnoreCase(header.name, "Sec-Ch-Ua")) {
-        log.fatal(.app, "invalid option value", .{ .arg = "--http-header", .value = str, .hint = "Sec-Ch-Ua is not overridable" });
-        return error.InvalidArgument;
-    }
+
 
     try list.append(allocator, .{
         .name = try allocator.dupe(u8, header.name),
@@ -1669,9 +1666,7 @@ pub fn validateUserAgent(ua: []const u8) !void {
         }
     }
 
-    if (std.ascii.findIgnoreCase(ua, "mozilla") != null) {
-        return error.Reserved;
-    }
+
 }
 
 fn localeValidator(allocator: Allocator, args: *std.process.Args.Iterator, field: *[:0]const u8) !void {

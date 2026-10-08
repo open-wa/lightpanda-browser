@@ -43,7 +43,7 @@ _on_message_error: ?js.Function.Global = null,
 _entangled_port: ?*MessagePort = null,
 
 // queued message received before the port is started.
-_pending: std.ArrayList(js.Value.Global) = .empty,
+_pending: std.ArrayList(js.Value.ClonedMessage) = .empty,
 
 // Link list into the owning Frame or WorkerGlobalScope. When the frame/WGS is
 // shutdown, the port will be closed.
@@ -67,7 +67,7 @@ pub fn entangle(port1: *MessagePort, port2: *MessagePort) void {
     port2._entangled_port = port1;
 }
 
-pub fn postMessage(self: *MessagePort, message: js.Value) !void {
+pub fn postMessage(self: *MessagePort, message: js.Value, options: ?js.Value) !void {
     if (self._closed) {
         return;
     }
@@ -93,10 +93,10 @@ pub fn postMessage(self: *MessagePort, message: js.Value) !void {
         try_catch.init(&ls.local);
         defer try_catch.deinit();
 
-        const c = message.structuredCloneTo(&ls.local) catch {
+        const c = message.cloneMessageTo(&ls.local, options, self) catch {
             return error.DataClone;
         };
-        break :blk try c.persist();
+        break :blk c;
     };
     errdefer cloned.release();
 
@@ -106,6 +106,26 @@ pub fn postMessage(self: *MessagePort, message: js.Value) !void {
     }
 
     try other.scheduleDelivery(cloned);
+}
+
+pub fn prepareTransfer(self: *MessagePort, target: *const js.Local) !*MessagePort {
+    const destination = try MessagePort.init(&target.ctx.execution);
+    errdefer destination.close();
+    for (self._pending.items) |message| {
+        if (message.ports.len != 0) return error.DataClone;
+        const cloned = try message.data.local(target).structuredCloneTo(target);
+        const persisted = try cloned.persist();
+        errdefer persisted.release();
+        try destination._pending.append(destination._exec.arena, .{ .data = persisted });
+    }
+    return destination;
+}
+
+pub fn commitTransfer(self: *MessagePort, destination: *MessagePort) void {
+    destination._entangled_port = self._entangled_port;
+    if (self._entangled_port) |peer| peer._entangled_port = destination;
+    self._entangled_port = null;
+    self.close();
 }
 
 pub fn start(self: *MessagePort) void {
@@ -163,7 +183,7 @@ fn setOnMessageError(self: *MessagePort, cb: ?js.Function.Global) !void {
 
 // Queues delivery of `message` (a clone already living in this port's
 // context) on this port's scheduler.
-fn scheduleDelivery(self: *MessagePort, message: js.Value.Global) !void {
+fn scheduleDelivery(self: *MessagePort, message: js.Value.ClonedMessage) !void {
     const exec = self._exec;
     const callback = try exec._factory.create(DeliverCallback{
         .port = self,
@@ -179,7 +199,7 @@ fn scheduleDelivery(self: *MessagePort, message: js.Value.Global) !void {
 
 const DeliverCallback = struct {
     port: *MessagePort,
-    message: js.Value.Global,
+    message: js.Value.ClonedMessage,
 
     // Called by the scheduler if the task is dropped before it runs. `run` and
     // `cancelled` are mutually exclusive, so the temp is released exactly once.
@@ -214,7 +234,8 @@ const DeliverCallback = struct {
         }
 
         const event = (MessageEvent.initTrusted(comptime .wrap("message"), .{
-            .data = .{ .value = self.message },
+            .data = .{ .value = self.message.data },
+            .ports = self.message.ports,
             .origin = "",
             .source = null,
         }, exec.page) catch |err| {

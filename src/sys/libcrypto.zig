@@ -136,6 +136,8 @@ pub extern fn EC_KEY_set_public_key(key: *EC_KEY, point: *const EC_POINT) c_int;
 // DER decoders (advance `inp` past the parsed structure).
 pub extern fn d2i_PUBKEY(out: ?*?*EVP_PKEY, inp: *[*c]const u8, len: c_long) ?*EVP_PKEY;
 pub extern fn d2i_AutoPrivateKey(out: ?*?*EVP_PKEY, inp: *[*c]const u8, len: c_long) ?*EVP_PKEY;
+pub extern fn i2d_PUBKEY(pkey: *const EVP_PKEY, out: ?*[*c]u8) c_int;
+pub extern fn i2d_PrivateKey(pkey: *const EVP_PKEY, out: ?*[*c]u8) c_int;
 
 const NID_X25519 = @as(c_int, 948);
 pub const EVP_PKEY_X25519 = NID_X25519;
